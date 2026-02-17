@@ -1,5 +1,6 @@
 {
   "realtime": false,
+  "debug": true,
   "node_class": [
     "WRITE_NODE_CLASS_HERE"
   ]
