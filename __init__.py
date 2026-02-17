@@ -47,10 +47,6 @@ def format_size(size_bytes):
     s = size_bytes / p
     return f"{s:.2f} {size_name[i]}"
 
-import sys
-import torch
-import logging
-
 def calc_obj_size(obj, seen):
     obj_id = id(obj)
     if obj_id in seen:
@@ -145,12 +141,29 @@ def create_patched_set(original_set_method, cache_class_name):
                             should_cache = False
                     
                     if not should_cache:
+                        target_cache_obj = self
+                        if hasattr(self, "_get_cache_for"):
+                            try:
+                                target_cache_obj = self._get_cache_for(node_id)
+                            except:
+                                target_cache_obj = self
+                                
+                        if target_cache_obj and hasattr(target_cache_obj, "cache"):
+                            cache_key = target_cache_obj.cache_key_set.get_data_key(node_id)
+                            if cache_key is not None and cache_key in target_cache_obj.cache:
+                                del target_cache_obj.cache[cache_key]
+                                for attr in ["used_generation", "children", "timestamps"]:
+                                    if hasattr(target_cache_obj, attr):
+                                        attr_dict = getattr(target_cache_obj, attr)
+                                        if cache_key in attr_dict:
+                                            del attr_dict[cache_key]
+                                            
                         LOG = f"[ComfyUI-NoCache] Cache for node [{node_id}]\"{node_title}\" has been ignored."
                         if LOG != LAST_LOG:
                             print(LOG)
                             LAST_LOG = LOG
         except Exception as e:
-            raise e
+            print(f"[NoCache] Error during cache clearing: {e}")
 
         if should_cache:
             return original_set_method(self, node_id, value)
