@@ -174,21 +174,27 @@ def create_patched_set(original_set_method, cache_class_name):
 
 def patch_executor():
     original_execute = execution.PromptExecutor.execute_async
+
+    if getattr(original_execute, "_is_patched_by_nocache", False):
+        return
     
     async def patched_execute_async(self, prompt, prompt_id, extra_data={}, execute_outputs=[]):
         try:
             return await original_execute(self, prompt, prompt_id, extra_data, execute_outputs)
         finally:
-            if _CONFIG_CACHE["debug"]:
+            if _CONFIG_CACHE.get("debug"):
                 try:
                     run_cache_analysis(self, prompt)
                 except Exception as e:
                     print(f"[ComfyUI-NoCache] Analysis failed: {e}")
                     
+    patched_execute_async._is_patched_by_nocache = True
     execution.PromptExecutor.execute_async = patched_execute_async
 
+print("="*40 + " ComfyUI-NoCache Initialization " + "="*40)
+
 patch_executor()
-target_classes = [BasicCache, HierarchicalCache, LRUCache, RAMPressureCache]
+target_classes = [BasicCache, HierarchicalCache, RAMPressureCache, LRUCache]
 for cls in target_classes:
     if hasattr(cls, 'set'):
         original_method = cls.set
@@ -197,7 +203,10 @@ for cls in target_classes:
             patched_method._is_patched_by_nocache = True
             cls.set = patched_method
             print(f"[ComfyUI-NoCache] {cls.__name__} patche applied!")
-print("You can skip caching by adding 'NO_CACHE = True' to the node class or '@NoCache' to the node title.")
+
+print("-"*112)
+print("You can skip caching by adding 'NO_CACHE = True' to the node class or adding '@NoCache' to the node title.")
+print("="*112)
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
