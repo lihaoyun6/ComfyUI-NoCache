@@ -109,7 +109,7 @@ def run_cache_analysis(executor, prompt):
 
     results.sort(key=lambda x: x["logical"], reverse=True)
     for res in results:
-        print(f"#{res['id']: <8} | {res['type']: <32} | {format_size(res['logical']): >10} | {format_size(res['physical']): >10}")
+        print(f"#{res['id']: <7} | {res['type']: <32} | {format_size(res['logical']): >10} | {format_size(res['physical']): >10}")
         
     print("-" * 70)
     print(f"-------- | {'-'*32} | Total Size | {format_size(total_physical_size): >10}")
@@ -187,6 +187,7 @@ def patch_executor():
                     
     execution.PromptExecutor.execute_async = patched_execute_async
 
+patch_executor()
 target_classes = [BasicCache, HierarchicalCache, LRUCache, RAMPressureCache]
 for cls in target_classes:
     if hasattr(cls, 'set'):
@@ -195,8 +196,8 @@ for cls in target_classes:
             patched_method = create_patched_set(original_method, cls.__name__)
             patched_method._is_patched_by_nocache = True
             cls.set = patched_method
-patch_executor()
-print("[ComfyUI-NoCache] Patches applied. Usage: Add 'NO_CACHE = True' to node class or add '@NoCache' to node title.")
+            print(f"[ComfyUI-NoCache] {cls.__name__} patche applied!")
+print("You can skip caching by adding 'NO_CACHE = True' to the node class or '@NoCache' to the node title.")
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
