@@ -76,11 +76,11 @@ def calc_obj_size(obj, seen):
     return size
 
 def run_cache_analysis(executor, prompt):
-    print("\n" + "="*65)
+    print("\n" + "="*70)
     print(f"[ComfyUI-NoCache] Node Cache Analysis Report")
-    print("="*65)
-    print(f"Index | {'Node Class Type': <30} | Cache Size | Actual RAM")
-    print("-" * 65)
+    print("=" * 70)
+    print(f"Node ID  | {'Node Class Type': <32} | Cache Size | Actual RAM")
+    print("-" * 70)
     
     output_cache = executor.caches.outputs
     physical_seen = set()
@@ -109,11 +109,11 @@ def run_cache_analysis(executor, prompt):
 
     results.sort(key=lambda x: x["logical"], reverse=True)
     for res in results:
-        print(f"#{res['id']: <4} | {res['type']: <30} | {format_size(res['logical']): >10} | {format_size(res['physical']): >10}")
+        print(f"#{res['id']: <8} | {res['type']: <32} | {format_size(res['logical']): >10} | {format_size(res['physical']): >10}")
         
-    print("-" * 65)
-    print(f"----- | ------------------------------ | Total Size | {format_size(total_physical_size): >10}")
-    print("="*65 + "\n")
+    print("-" * 70)
+    print(f"-------- | {'-'*32} | Total Size | {format_size(total_physical_size): >10}")
+    print("="*70 + "\n")
 
 def create_patched_set(original_set_method, cache_class_name):
     def new_set(self, node_id, value):
