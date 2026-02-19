@@ -18,6 +18,12 @@ _CONFIG_CACHE = {
     "_loaded_once": False
 }
 
+class AnyType(str):
+    def __ne__(self, __value: object) -> bool:
+        return False
+    
+any_type = AnyType("*")
+
 def load_config():
     global _CONFIG_CACHE
     
@@ -77,7 +83,7 @@ def calc_obj_size(obj, seen):
 
 def run_cache_analysis(executor, prompt):
     print("\n" + "="*70)
-    print(f"[ComfyUI-NoCache] Node Cache Analysis Report")
+    print(f"[ComfyUI-NoCache]      Node Cache Analysis Report          (≥ 1.0 MB)")
     print("=" * 70)
     print(f"Node ID  | {'Node Class Type': <32} | Cache Size | Actual RAM")
     print("-" * 70)
@@ -97,7 +103,7 @@ def run_cache_analysis(executor, prompt):
         l_size = calc_obj_size(val, logical_seen)
         p_size = calc_obj_size(val, physical_seen)
         
-        if l_size > 1024 * 1024:
+        if l_size >= 1024 * 1024:
             class_type = prompt[node_id].get("class_type", "Unknown")
             results.append({
                 "id": node_id,
@@ -208,5 +214,31 @@ print("-"*112)
 print("You can skip caching by adding 'NO_CACHE = True' to the node class or adding '@NoCache' to the node title.")
 print("="*112)
 
-NODE_CLASS_MAPPINGS = {}
-NODE_DISPLAY_NAME_MAPPINGS = {}
+class NoCacheDebug:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "any": (any_type,),
+                "realtime": ("BOOLEAN", {"default": False}),
+                "debug": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    FUNCTION = "main"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    CATEGORY = "NoCache"
+    
+    def main(self, any, realtime, debug):
+        global _CONFIG_CACHE
+        _CONFIG_CACHE["realtime"] = realtime
+        _CONFIG_CACHE["debug"] = debug
+        return ()
+
+NODE_CLASS_MAPPINGS = {
+    "NoCacheDebug": NoCacheDebug
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "NoCacheDebug": "NoCache Debug"
+}
