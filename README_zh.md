@@ -11,11 +11,10 @@ git clone https://github.com/lihaoyun6/ComfyUI-NoCache.git
 ```
 
 #### 使用方法:  
-对于普通用户: 
-> 在任意节点标题中添加 `@NoCache` (不分大小写) 即可使其在执行结束后自动释放缓存 (需搭配此插件).
+- 在任意节点标题中添加 `@NC` (不分大小写) 来使其输出值不被 ComfyUI 所缓存.  
+- 在任意节点标题中添加 `@GC` (不分大小写) 来释放已执行的 NC 节点占用的内存.  
 
-对于开发者:  
-> 在您的节点定义中添加 `NO_CACHE = True` 来使其被 ComfyUI 的缓存机制所忽略 (需搭配此插件).
+    > `@GC` 节点必须位于 `@NC` 节点之后. 因为 `@NC` 节点无法自己清理自己的内存占用.
 
 ## 致谢   
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) @comfyanonymous
