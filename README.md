@@ -12,7 +12,7 @@ git clone https://github.com/lihaoyun6/ComfyUI-NoCache.git
 
 #### How to use:  
 - Add `@NC` (case-insensitive) to the title of the node where you want to ignore caching.  
-- Add `@GC` (case-insensitive) to the title of the node where you want to free yo your RAM.  
+- Add `@GC` (case-insensitive) to the title of the node where you want to free up your RAM.  
 
     > A `@GC` node must be located after a `@NC` node. The `@NC` node cannot clear its own RAM usage.
 
