@@ -281,7 +281,7 @@ def patch_executor():
                 try:
                     run_cache_analysis(self, prompt)
                 except Exception as e:
-                print(f"[ComfyUI-NoCache] ❗️ Analysis failed: {e}")
+                    print(f"[ComfyUI-NoCache] ❗️ Analysis failed: {e}")
             LOCAL_NOCACHE_CONFIG.reset(token)
             
     patched_execute_async._is_patched_by_nocache = True
