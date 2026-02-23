@@ -1,6 +1,7 @@
 import os
 import sys
 import gc
+import re
 import json
 import time
 import torch
@@ -12,6 +13,7 @@ import execution
 import comfy.model_management as mm
 from comfy_execution.caching import BasicCache, HierarchicalCache, LRUCache, RAMPressureCache
 
+LOCAL_NOCACHE_CONFIG = contextvars.ContextVar("local_nocache_config", default=None)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(CURRENT_DIR, "config.json")
 _LAST_LOG = ""
@@ -21,13 +23,16 @@ _CONFIG_CACHE = {
     "node_class": []
 }
 
-LOCAL_NOCACHE_CONFIG = contextvars.ContextVar("local_nocache_config", default=None)
-
 class AnyType(str):
     def __ne__(self, __value: object) -> bool:
         return False
     
 any_type = AnyType("*")
+
+def log(string, force=False):
+    config = LOCAL_NOCACHE_CONFIG.get() or _CONFIG_CACHE
+    if config.get("debug", False) or force:
+        print(string)
 
 def load_config():
     global _CONFIG_CACHE
@@ -118,12 +123,14 @@ def run_cache_analysis(executor, prompt):
     print(f"-------- | {'-'*32} | Total Size | {format_size(total_physical_size): >10}")
     print("="*70 + "\n")
 
-def check_is_nocache_raw(node_info, config):
+def check_is_nocache_raw(node_id, node_info, config):
     if not isinstance(node_info, dict):
         return False
     try:
         title = node_info.get("_meta", {}).get("title", "")
         class_type = node_info.get("class_type", "")
+        if node_id in config["special_tags"]["all"]:
+            return False
         if class_type in config.get("node_class", []):
             return True
         if "@nocache" in title.lower() or "@nc" in title.lower():
@@ -136,10 +143,37 @@ def check_is_nocache(node_id, dynprompt, config):
     try:
         if not dynprompt.has_node(node_id):
             return False
-        return check_is_nocache_raw(dynprompt.get_node(node_id), config)
+        return check_is_nocache_raw(node_id, dynprompt.get_node(node_id), config)
     except:
         return False
     
+def delete_node_cache(node_id, root_cache):
+    if not root_cache:
+        return False
+    
+    deleted_any = False
+    def _recursive_delete(cache_obj):
+        nonlocal deleted_any
+        if hasattr(cache_obj, "cache") and isinstance(cache_obj.cache, dict) and hasattr(cache_obj, "cache_key_set"):
+            try:
+                cache_key = cache_obj.cache_key_set.get_data_key(node_id)
+                if cache_key is not None and cache_key in cache_obj.cache:
+                    val = cache_obj.cache[cache_key]
+                    del cache_obj.cache[cache_key]
+                    deleted_any = True
+                    for attr in ["used_generation", "children", "timestamps"]:
+                        if hasattr(cache_obj, attr) and cache_key in getattr(cache_obj, attr):
+                            del getattr(cache_obj, attr)[cache_key]
+            except Exception:
+                pass
+
+        if hasattr(cache_obj, "subcaches") and isinstance(cache_obj.subcaches, dict):
+            for sub_cache in cache_obj.subcaches.values():
+                _recursive_delete(sub_cache)
+
+    _recursive_delete(root_cache)
+    return deleted_any
+
 def purge_stale_nocache_entries(executor, prompt, config):
     if not hasattr(executor, "caches") or not hasattr(executor.caches, "outputs"):
         return
@@ -148,30 +182,34 @@ def purge_stale_nocache_entries(executor, prompt, config):
     purged_count = 0
     
     for node_id, node_info in prompt.items():
-        if check_is_nocache_raw(node_info, config):
-            target_cache_obj = output_cache
-
-            if hasattr(output_cache, "_get_cache_for"):
-                try:
-                    target_cache_obj = output_cache._get_cache_for(node_id)
-                except:
-                    continue
-                
-            if target_cache_obj and hasattr(target_cache_obj, "cache"):
-                cache_key = target_cache_obj.cache_key_set.get_data_key(node_id)
-                if cache_key is not None and cache_key in target_cache_obj.cache:
-                    del target_cache_obj.cache[cache_key]
-                    for attr in ["used_generation", "children", "timestamps"]:
-                        if hasattr(target_cache_obj, attr) and cache_key in getattr(target_cache_obj, attr):
-                            del getattr(target_cache_obj, attr)[cache_key]
-                    purged_count += 1
-                    if config.get("debug", False):
-                        title = node_info.get("_meta", {}).get("title", str(node_id))
-                        print(f"[ComfyUI-NoCache] Removed existing cache for #{node_id} \"{title}\" before run.")
-                            
+        if check_is_nocache_raw(node_id, node_info, config):
+            if delete_node_cache(node_id, output_cache):
+                purged_count += 1
+                title = node_info.get("_meta", {}).get("title", "")
+                log(f"[ComfyUI-NoCache] 🗑️ Removed existing cache for #{node_id} \"{title}\" before run.")
+                    
     if purged_count > 0:
         gc.collect()
         mm.soft_empty_cache()
+
+def scan_nc_tags(prompt):
+    nc_tags = {"all":[]}
+    pattern = re.compile(r"@nc#(\d+)", re.IGNORECASE)
+    
+    for node_id, node_info in prompt.items():
+        if isinstance(node_info, dict):
+            meta = node_info.get("_meta", {})
+            title = meta.get("title", "")
+            
+            match = pattern.search(title)
+            if match:
+                num = int(match.group(1))
+                if num not in nc_tags:
+                    nc_tags[num] = []
+                nc_tags[num].append(node_id)
+                nc_tags["all"].append(node_id)
+                
+    return nc_tags
 
 def create_patched_set(original_set_method, cache_class_name):
     def new_set(self, node_id, value):
@@ -184,15 +222,14 @@ def create_patched_set(original_set_method, cache_class_name):
                 if hasattr(self, "dynprompt") and self.dynprompt:
                     if check_is_nocache(node_id, self.dynprompt, config):
                         should_cache = False
-                        if config.get("debug", False):
-                            node_info = self.dynprompt.get_node(node_id)
-                            node_title = node_info.get("_meta", {}).get("title", "")
-                            LOG = f"[ComfyUI-NoCache] Cache for node #{node_id} [{node_title}] has been ignored."
-                            if LOG != _LAST_LOG:
-                                print(LOG)
-                                _LAST_LOG = LOG
+                        node_info = self.dynprompt.get_node(node_id)
+                        node_title = node_info.get("_meta", {}).get("title", "")
+                        LOG = f"[ComfyUI-NoCache] 💤 Cache for node #{node_id} [{node_title}] has been ignored."
+                        if LOG != _LAST_LOG:
+                            log(LOG)
+                            _LAST_LOG = LOG
             except Exception as e:
-                print(f"[NoCache] Error during cache clearing: {e}")
+                print(f"[ComfyUI-NoCache] ❗️ Error during cache clearing: {e}")
 
         if should_cache:
             return original_set_method(self, node_id, value)
@@ -226,15 +263,16 @@ def patch_executor():
                 local_config["enabled"] = bool(en_val)
             if dbg_val is not None and not isinstance(dbg_val, list):
                 local_config["debug"] = bool(dbg_val)
-            print(f"[ComfyUI-NoCache] Configuration Applied: {local_config}")
-            
+
+        local_config["special_tags"] = scan_nc_tags(prompt)
         token = LOCAL_NOCACHE_CONFIG.set(local_config)
         
         if local_config.get("enabled", True):
+            print(f"[ComfyUI-NoCache] ⚙️ Configuration Applied: {local_config}")
             try:
                 purge_stale_nocache_entries(self, prompt, local_config)
             except Exception as e:
-                print(f"[ComfyUI-NoCache] Stale purge failed (harmless): {e}")
+                print(f"[ComfyUI-NoCache] ❗️ Stale purge failed (harmless): {e}")
         
         try:
             return await original_execute_async(self, prompt, prompt_id, extra_data, execute_outputs)
@@ -243,7 +281,7 @@ def patch_executor():
                 try:
                     run_cache_analysis(self, prompt)
                 except Exception as e:
-                    print(f"[ComfyUI-NoCache] Analysis failed: {e}")
+                print(f"[ComfyUI-NoCache] ❗️ Analysis failed: {e}")
             LOCAL_NOCACHE_CONFIG.reset(token)
             
     patched_execute_async._is_patched_by_nocache = True
@@ -255,15 +293,24 @@ def patch_executor():
             time.sleep(0.5)
             gc.collect()
             mm.soft_empty_cache()
-            print(f"[ComfyUI-NoCache] GC Triggered by #{node_id} \"{node_title}\" (Attempt {i+1}/3)")
 
     async def patched_execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results, pending_async_nodes, ui_outputs):
         result = await original_execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results, pending_async_nodes, ui_outputs)
         config = LOCAL_NOCACHE_CONFIG.get() or _CONFIG_CACHE
         if config.get("enabled", True):
             title = dynprompt.get_node(current_item).get("_meta", {}).get("title", "")
-            debug = config.get("debug", False)
             if "@gc" in title.lower():
+                pattern = re.compile(r"@gc#(\d+)", re.IGNORECASE)
+                match = pattern.search(title)
+                if match:
+                    num = int(match.group(1))
+                    nc_nodes = config["special_tags"][num]
+                    for nc_node in nc_nodes:
+                        nc_title = dynprompt.get_node(nc_node).get("_meta", {}).get("title", "")
+                        if caches and hasattr(caches, "outputs"):
+                            if delete_node_cache(nc_node, caches.outputs):
+                                log(f"[ComfyUI-NoCache] 🗑️ Cache for node #{nc_node} [{nc_title}] ({num}) has been removed.")
+                log(f"[ComfyUI-NoCache] ♻️ GC Triggered by #{current_item} [{title}]")
                 threading.Thread(target=_gc_task, args=(current_item, title), daemon=True).start()
         return result
     
