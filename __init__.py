@@ -304,7 +304,7 @@ def patch_executor():
                 match = pattern.search(title)
                 if match:
                     num = int(match.group(1))
-                    nc_nodes = config["special_tags"][num]
+                    nc_nodes = config["special_tags"].get(num,[])
                     for nc_node in nc_nodes:
                         nc_title = dynprompt.get_node(nc_node).get("_meta", {}).get("title", "")
                         if caches and hasattr(caches, "outputs"):
